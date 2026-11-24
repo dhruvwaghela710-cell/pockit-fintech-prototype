@@ -3,87 +3,183 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pockit | Blockchain Demo</title>
+  <title>Pockit | Sepolia Dashboard</title>
+
   <style>
     * { box-sizing: border-box; }
+
     body {
       margin: 0;
-      font: 16px/1.5 system-ui, sans-serif;
+      background: #eff5f0;
       color: #18332a;
-      background: #f1f5f2;
+      font: 16px/1.5 system-ui, sans-serif;
     }
-    main { max-width: 730px; margin: auto; padding: 24px 16px; }
-    section {
+
+    main {
+      max-width: 960px;
+      margin: auto;
+      padding: 24px 16px;
+    }
+
+    h1, h2, p { margin: 0 0 10px; }
+    h2 { font-size: 1.2rem; }
+    p, pre { overflow-wrap: anywhere; }
+
+    section, details {
       margin: 14px 0;
-      padding: 20px;
+      padding: 18px;
       background: white;
       border: 1px solid #c9d9d1;
       border-radius: 12px;
     }
-    h1, h2, p { margin: 0 0 10px; }
-    h2 { font-size: 1.15rem; }
-    label { display: block; margin-top: 12px; font-weight: 600; }
-    input, select, button {
-      font: inherit;
-      padding: 9px 12px;
+
+    label {
+      display: block;
+      margin: 12px 0 4px;
+      font-weight: 600;
+    }
+
+    input, select, button { font: inherit; }
+
+    input:not([type="checkbox"]), select, button {
+      padding: 8px 12px;
       border: 1px solid #9ab5a8;
       border-radius: 7px;
     }
-    input, select { display: block; width: 100%; margin: 5px 0 10px; }
-    button { color: white; background: #155942; cursor: pointer; }
-    button:disabled { opacity: .55; cursor: default; }
+
+    input:not([type="checkbox"]), select {
+      display: block;
+      width: 100%;
+      margin: 4px 0 10px;
+    }
+
+    button {
+      background: #155942;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: .55;
+      cursor: default;
+    }
+
     a { color: #155942; }
-    #wallet, #status { margin-top: 10px; overflow-wrap: anywhere; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    summary { cursor: pointer; font-weight: 650; }
+    pre { white-space: pre-wrap; }
     pre:empty { display: none; }
+
+    .tools {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .tools label { margin: 0; }
+    .table-scroll { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      min-width: 690px;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: 9px;
+      border-bottom: 1px solid #d5e2da;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th { background: #edf6ee; }
+    #wallet, #history-more { margin-top: 10px; }
+    #load-error { color: #9d231e; }
   </style>
 
-  <script defer src="https://cdn.jsdelivr.net/npm/ethers@6.13.5/dist/ethers.umd.min.js"></script>
+  <script
+    defer
+    src="https://cdn.jsdelivr.net/npm/ethers@6.13.5/dist/ethers.umd.min.js"
+  ></script>
   <script
     defer
     src="./app.js"
-    onerror="document.getElementById('status').textContent = 'Could not load app.js. Check the filename and folder.'"
+    onerror="document.getElementById('load-error').textContent = 'Could not load app.js. Check the filename and folder.'"
   ></script>
 </head>
+
 <body>
   <main>
     <h1>Pockit Blockchain Demo</h1>
-    <p>Florist and garage smart contracts on Sepolia.</p>
+    <p>Florist and garage contracts on Sepolia.</p>
+    <p id="load-error" role="alert"></p>
 
     <section>
-      <h2>1. Connect your wallet</h2>
+      <h2>Wallet and contract</h2>
       <button id="connect" type="button">Connect MetaMask</button>
       <p id="wallet" aria-live="polite">Wallet disconnected</p>
-      <p id="status" role="status">Loading the app…</p>
+      <p id="status" role="status"></p>
+
+      <label for="contract">Choose a contract</label>
+      <select id="contract"></select>
+      <p id="description"></p>
     </section>
 
     <section>
-      <h2>2. Choose a contract</h2>
-      <label for="contract">Contract</label>
-      <select id="contract"></select>
-      <p id="description"></p>
-      <a id="address" target="_blank" rel="noopener noreferrer">View contract on Sepolia Etherscan</a>
+      <h2>Transaction history</h2>
+      <div class="tools">
+        <button id="history-refresh" type="button">Refresh history</button>
+        <label>
+          <input id="history-all" type="checkbox">
+          Show all wallets
+        </label>
+      </div>
+
+      <p id="history-status" role="status"></p>
+
+      <div class="table-scroll">
+        <table aria-label="Sepolia contract transactions">
+          <thead>
+            <tr>
+              <th scope="col">Action</th>
+              <th scope="col">Date</th>
+              <th scope="col">From wallet</th>
+              <th scope="col">Test ETH sent</th>
+              <th scope="col">Status</th>
+              <th scope="col">Receipt</th>
+            </tr>
+          </thead>
+          <tbody id="history-rows"></tbody>
+        </table>
+      </div>
+
+      <button id="history-more" type="button" hidden>
+        Load older transactions
+      </button>
+    </section>
+
+    <details id="action-panel">
+      <summary>Run a contract action</summary>
 
       <label for="abi">Load this contract’s ABI JSON from Remix</label>
       <input id="abi" type="file" accept=".json,.abi,application/json">
-      <p id="abi-status" aria-live="polite"></p>
-    </section>
+      <p id="abi-status" role="status"></p>
 
-    <section>
-      <h2>3. Run an action</h2>
-      <form id="form">
-        <label for="action">Action</label>
+      <form id="action-form">
+        <label for="action">Choose an action</label>
         <select id="action" disabled></select>
         <div id="fields"></div>
         <button id="run" type="submit" disabled>Run action</button>
       </form>
-    </section>
+    </details>
 
-    <section>
-      <h2>Result</h2>
-      <a id="receipt" target="_blank" rel="noopener noreferrer" hidden>Open transaction receipt</a>
+    <section id="result-panel">
+      <h2>Action result</h2>
       <pre id="result" aria-live="polite"></pre>
-      <p id="remix" hidden></p>
+      <a id="receipt" target="_blank" rel="noopener noreferrer" hidden>
+        Open this transaction receipt
+      </a>
     </section>
   </main>
 </body>

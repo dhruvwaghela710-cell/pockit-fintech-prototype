@@ -3,86 +3,75 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pockit | Sepolia Dashboard</title>
+  <title>Pockit | Sepolia Demo</title>
 
   <style>
     * { box-sizing: border-box; }
 
     body {
       margin: 0;
-      background: #eff5f0;
+      background: #eef5f0;
       color: #18332a;
       font: 16px/1.5 system-ui, sans-serif;
     }
 
     main {
-      max-width: 960px;
+      max-width: 920px;
       margin: auto;
-      padding: 24px 16px;
+      padding: 28px 16px 48px;
     }
 
     h1, h2, p { margin: 0 0 10px; }
-    h2 { font-size: 1.2rem; }
-    p, pre { overflow-wrap: anywhere; }
 
     section, details {
-      margin: 14px 0;
-      padding: 18px;
+      margin: 16px 0;
+      padding: 20px;
       background: white;
       border: 1px solid #c9d9d1;
       border-radius: 12px;
     }
 
-    label {
-      display: block;
-      margin: 12px 0 4px;
-      font-weight: 600;
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
     }
 
-    input, select, button { font: inherit; }
+    label { display: block; margin: 12px 0 4px; font-weight: 600; }
+    button, input, select { font: inherit; }
 
-    input:not([type="checkbox"]), select, button {
-      padding: 8px 12px;
+    button, input:not([type="checkbox"]), select {
+      padding: 9px 12px;
       border: 1px solid #9ab5a8;
-      border-radius: 7px;
+      border-radius: 8px;
     }
 
     input:not([type="checkbox"]), select {
       display: block;
       width: 100%;
       margin: 4px 0 10px;
+      background: white;
+      color: inherit;
     }
 
-    button {
-      background: #155942;
-      color: white;
-      cursor: pointer;
-    }
-
-    button:disabled {
-      opacity: .55;
-      cursor: default;
-    }
-
+    input[readonly] { background: #f2f6f3; }
+    button { color: white; background: #155942; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: default; }
     a { color: #155942; }
     summary { cursor: pointer; font-weight: 650; }
+    p, pre { overflow-wrap: anywhere; }
     pre { white-space: pre-wrap; }
-    pre:empty { display: none; }
+    [hidden] { display: none !important; }
 
-    .tools {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 12px;
-      margin-bottom: 10px;
-    }
-
-    .tools label { margin: 0; }
+    .muted { color: #4c6358; }
+    .toolbar { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+    .toolbar label { margin: 0; }
     .table-scroll { overflow-x: auto; }
+    #history-status, #history-more { margin-top: 10px; }
 
     table {
       width: 100%;
-      min-width: 690px;
+      min-width: 650px;
       border-collapse: collapse;
     }
 
@@ -94,46 +83,85 @@
     }
 
     th { background: #edf6ee; }
-    #wallet, #history-more { margin-top: 10px; }
-    #load-error { color: #9d231e; }
-  </style>
 
-  <script
-    defer
-    src="https://cdn.jsdelivr.net/npm/ethers@6.13.5/dist/ethers.umd.min.js"
-  ></script>
-  <script
-    defer
-    src="./app.js"
-    onerror="document.getElementById('load-error').textContent = 'Could not load app.js. Check the filename and folder.'"
-  ></script>
+    @media (max-width: 600px) {
+      .grid { grid-template-columns: 1fr; gap: 0; }
+    }
+  </style>
 </head>
 
 <body>
   <main>
     <h1>Pockit Blockchain Demo</h1>
-    <p>Florist and garage contracts on Sepolia.</p>
+    <p class="muted">Florist and garage contracts on the Sepolia test network.</p>
     <p id="load-error" role="alert"></p>
 
     <section>
-      <h2>Wallet and contract</h2>
-      <button id="connect" type="button">Connect MetaMask</button>
-      <p id="wallet" aria-live="polite">Wallet disconnected</p>
-      <p id="status" role="status"></p>
+      <h2>💳 Payment &amp; contract actions</h2>
 
-      <label for="contract">Choose a contract</label>
-      <select id="contract"></select>
-      <p id="description"></p>
+      <div class="grid">
+        <div>
+          <label for="business">Choose a business</label>
+          <select id="business">
+            <option value="">Select a business</option>
+            <option value="flowers">Irish Flowers</option>
+            <option value="garage">Premier Pitstop — Service &amp; Repair</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="contract">Choose a contract</label>
+          <select id="contract" disabled>
+            <option value="">Select a business first</option>
+          </select>
+        </div>
+      </div>
+
+      <p id="description" class="muted"></p>
+      <p id="contract-address" class="muted"></p>
+
+      <button id="connect" type="button">Connect MetaMask</button>
+      <label for="wallet">👛 Connected MetaMask wallet</label>
+      <input id="wallet" readonly placeholder="Connect MetaMask to show your address">
+
+      <div id="contract-setup" hidden>
+        <label for="abi">Load the selected contract’s ABI JSON from Remix</label>
+        <input id="abi" type="file" accept=".json,.abi,application/json">
+        <p id="abi-status" class="muted" aria-live="polite"></p>
+      </div>
+
+      <form id="quick-form" hidden>
+        <div id="quick-fields"></div>
+        <button id="quick-submit" type="submit" disabled>
+          Review in MetaMask
+        </button>
+      </form>
+    </section>
+
+    <details id="other-actions" hidden>
+      <summary>Other contract actions</summary>
+      <form id="action-form">
+        <label for="action">Action</label>
+        <select id="action"></select>
+        <div id="action-fields"></div>
+        <button id="run" type="submit" disabled>Run action</button>
+      </form>
+    </details>
+
+    <section>
+      <h2>Result</h2>
+      <p id="status" role="status">Choose a business to begin.</p>
+      <pre id="result" hidden></pre>
+      <a id="receipt" target="_blank" rel="noopener noreferrer" hidden>
+        View receipt on Sepolia Etherscan
+      </a>
     </section>
 
     <section>
       <h2>Transaction history</h2>
-      <div class="tools">
+      <div class="toolbar">
         <button id="history-refresh" type="button">Refresh history</button>
-        <label>
-          <input id="history-all" type="checkbox">
-          Show all wallets
-        </label>
+        <label><input id="history-all" type="checkbox"> Show all wallets</label>
       </div>
 
       <p id="history-status" role="status"></p>
@@ -158,29 +186,11 @@
         Load older transactions
       </button>
     </section>
-
-    <details id="action-panel">
-      <summary>Run a contract action</summary>
-
-      <label for="abi">Load this contract’s ABI JSON from Remix</label>
-      <input id="abi" type="file" accept=".json,.abi,application/json">
-      <p id="abi-status" role="status"></p>
-
-      <form id="action-form">
-        <label for="action">Choose an action</label>
-        <select id="action" disabled></select>
-        <div id="fields"></div>
-        <button id="run" type="submit" disabled>Run action</button>
-      </form>
-    </details>
-
-    <section id="result-panel">
-      <h2>Action result</h2>
-      <pre id="result" aria-live="polite"></pre>
-      <a id="receipt" target="_blank" rel="noopener noreferrer" hidden>
-        Open this transaction receipt
-      </a>
-    </section>
   </main>
+
+  <script defer src="https://cdn.jsdelivr.net/npm/ethers@6.13.5/dist/ethers.umd.min.js"></script>
+  <script defer src="./app.js"
+    onerror="document.getElementById('load-error').textContent = 'Could not load app.js. Check that both files are in the same folder.'">
+  </script>
 </body>
 </html>

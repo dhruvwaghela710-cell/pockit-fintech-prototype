@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pockit | Blockchain Demo</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 16px/1.5 system-ui, sans-serif;
+      color: #18332a;
+      background: #f1f5f2;
+    }
+    main { max-width: 730px; margin: auto; padding: 24px 16px; }
+    section {
+      margin: 14px 0;
+      padding: 20px;
+      background: white;
+      border: 1px solid #c9d9d1;
+      border-radius: 12px;
+    }
+    h1, h2, p { margin: 0 0 10px; }
+    h2 { font-size: 1.15rem; }
+    label { display: block; margin-top: 12px; font-weight: 600; }
+    input, select, button {
+      font: inherit;
+      padding: 9px 12px;
+      border: 1px solid #9ab5a8;
+      border-radius: 7px;
+    }
+    input, select { display: block; width: 100%; margin: 5px 0 10px; }
+    button { color: white; background: #155942; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: default; }
+    a { color: #155942; }
+    #wallet, #status { margin-top: 10px; overflow-wrap: anywhere; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    pre:empty { display: none; }
+  </style>
+
+  <script defer src="https://cdn.jsdelivr.net/npm/ethers@6.13.5/dist/ethers.umd.min.js"></script>
+  <script
+    defer
+    src="./app.js"
+    onerror="document.getElementById('status').textContent = 'Could not load app.js. Check the filename and folder.'"
+  ></script>
+</head>
+<body>
+  <main>
+    <h1>Pockit Blockchain Demo</h1>
+    <p>Florist and garage smart contracts on Sepolia.</p>
+
+    <section>
+      <h2>1. Connect your wallet</h2>
+      <button id="connect" type="button">Connect MetaMask</button>
+      <p id="wallet" aria-live="polite">Wallet disconnected</p>
+      <p id="status" role="status">Loading the app…</p>
+    </section>
+
+    <section>
+      <h2>2. Choose a contract</h2>
+      <label for="contract">Contract</label>
+      <select id="contract"></select>
+      <p id="description"></p>
+      <a id="address" target="_blank" rel="noopener noreferrer">View contract on Sepolia Etherscan</a>
+
+      <label for="abi">Load this contract’s ABI JSON from Remix</label>
+      <input id="abi" type="file" accept=".json,.abi,application/json">
+      <p id="abi-status" aria-live="polite"></p>
+    </section>
+
+    <section>
+      <h2>3. Run an action</h2>
+      <form id="form">
+        <label for="action">Action</label>
+        <select id="action" disabled></select>
+        <div id="fields"></div>
+        <button id="run" type="submit" disabled>Run action</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>Result</h2>
+      <a id="receipt" target="_blank" rel="noopener noreferrer" hidden>Open transaction receipt</a>
+      <pre id="result" aria-live="polite"></pre>
+      <p id="remix" hidden></p>
+    </section>
+  </main>
+</body>
+</html>

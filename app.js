@@ -1,6 +1,7 @@
 "use strict";
 
 const SEPOLIA = "0xaa36a7";
+const SEPOLIA_CHAIN_ID = 11155111n;
 const EXPLORER = "https://sepolia.etherscan.io";
 const HISTORY_API = "https://eth-sepolia.blockscout.com/api/v2/addresses";
 
@@ -12,47 +13,39 @@ const businesses = {
 const contracts = {
   BloomPass: {
     address: "0xa2208d28ce723a0bd47a9de95e69bc4a44e2cd01",
-    description: "The florist issues a flower delivery pass to the customer’s wallet.",
-    primary: "issuePass",
-    recipient: true,
+    description: "Issue a flower delivery pass and track the customer’s remaining deliveries.",
     actions: {
       issuePass: "Issue a flower pass",
       redeemDelivery: "Record a delivery",
       creditBackDelivery: "Credit a delivery back",
       passes: "Check deliveries remaining",
-      isActive: "Check whether the pass is active",
+      isActive: "Check whether a pass is active",
       ownerOf: "Check the pass owner",
       transferFrom: "Transfer a pass",
       tokenURI: "Read the pass metadata link"
     }
   },
-
   EventEscrow: {
     address: "0xe6fe643edc39735163c3e29618d6e26ce15a2a66",
-    description: "The customer pays a deposit. EventEscrow holds it until the booking’s release conditions are met.",
-    primary: "createBooking",
-    deposit: true,
+    description: "Hold a flower booking deposit until the contract’s release conditions are met.",
     actions: {
       createBooking: "Pay a flower booking deposit",
       bookings: "Check a booking",
       acceptBooking: "Accept the booking",
       cancelBooking: "Cancel the booking",
       markDelivered: "Mark the order delivered",
-      confirmReceipt: "Confirm delivery and release payment",
+      confirmReceipt: "Confirm receipt and release payment",
       claimRefund: "Claim a refund"
     }
   },
-
   RepairEscrow: {
     address: "0xc8045f8005ea577f4294ba91a3326a5bb250b33c",
-    description: "The customer funds a repair. RepairEscrow holds the deposit until the repair’s release conditions are met.",
-    primary: "openJob",
-    deposit: true,
+    description: "Fund a repair and release the deposit when the customer approves completion.",
     actions: {
       openJob: "Fund a repair job",
       jobs: "Check a repair job",
       startJob: "Start the repair",
-      completeJob: "Mark repair complete",
+      completeJob: "Mark the repair complete",
       approveCompletion: "Approve completion and release payment",
       requestExtraWork: "Request extra work",
       approveExtra: "Approve extra work",
@@ -60,12 +53,9 @@ const contracts = {
       resolveDispute: "Resolve a dispute"
     }
   },
-
   ServicePassport: {
     address: "0x46db0219446508cca536903cbfc6180e2162668b",
-    description: "The garage registers a vehicle passport for the customer and adds service records.",
-    primary: "registerVehicle",
-    recipient: true,
+    description: "Register a vehicle passport and record its service history.",
     actions: {
       registerVehicle: "Register a vehicle passport",
       addServiceRecord: "Add a service record",
@@ -83,18 +73,17 @@ const businessSelect = el("business");
 const contractSelect = el("contract");
 const actionSelect = el("action");
 const abis = new Map();
-const history = new Map();
+const transactions = new Map();
 
 let announcedWallet;
 let connectedWallet;
 let account;
 let busy = false;
 let historyRequest;
-let nextPage;
-let primaryAction;
+let nextPage = null;
 
-const currentContract = () => contracts[contractSelect.value];
-const currentAbi = () => abis.get(contractSelect.value);
+const selectedContract = () => contracts[contractSelect.value];
+const selectedAbi = () => abis.get(contractSelect.value);
 
 window.addEventListener("eip6963:announceProvider", (event) => {
   if (event.detail?.info?.rdns === "io.metamask") {
@@ -103,23 +92,21 @@ window.addEventListener("eip6963:announceProvider", (event) => {
 });
 window.dispatchEvent(new Event("eip6963:requestProvider"));
 
-function setStatus(message) {
-  el("status").textContent = message;
+function ethereumLibrary() {
+  if (!window.ethers) {
+    throw new Error("The ethers library could not load. Reload the page.");
+  }
+  return window.ethers;
 }
 
-function showError(error) {
+function errorMessage(error) {
   const messages = {
-    4001: "You declined the request in MetaMask.",
+    4001: "You cancelled the request in MetaMask.",
     4902: "Enable Sepolia in MetaMask and try again.",
     "-32002": "Open MetaMask to review the pending request.",
-    ACTION_REJECTED: "You declined the request in MetaMask."
+    ACTION_REJECTED: "You cancelled the request in MetaMask."
   };
-  setStatus(messages[error.code] || error.shortMessage || error.message);
-}
-
-function ethereumLibrary() {
-  if (!window.ethers) throw new Error("The Ethereum library didn’t load. Reload the page.");
-  return window.ethers;
+  return messages[error.code] || error.shortMessage || error.message || "The request failed.";
 }
 
 function setBusy(value) {
@@ -127,24 +114,30 @@ function setBusy(value) {
   el("connect").disabled = value;
   businessSelect.disabled = value;
   contractSelect.disabled = value || !businessSelect.value;
-  el("abi").disabled = value || !currentContract();
+  el("abi").disabled = value || !selectedContract();
   actionSelect.disabled = value || !actionSelect.options.length;
   el("run").disabled = value || !actionSelect.value;
-  el("quick-submit").disabled = value || !account || !primaryAction;
+  el("pay").disabled = value || !selectedContract();
 }
 
 function updateAccount(address) {
+  el("wallet").value = address || "";
   if (account === address) return;
   account = address;
-  el("wallet").value = address || "";
-  setBusy(busy);
   void loadHistory(true);
+}
+
+function onAccountsChanged(addresses) {
+  updateAccount(addresses[0]);
+  el("wallet-status").textContent = addresses.length
+    ? "Sending wallet updated."
+    : "Wallet disconnected.";
 }
 
 async function connectWallet() {
   const injected = window.ethereum;
   const wallet = announcedWallet ??
-    injected?.providers?.find((provider) => provider.isMetaMask) ??
+    injected?.providers?.find((item) => item.isMetaMask) ??
     (injected?.isMetaMask ? injected : null);
 
   if (!wallet) {
@@ -155,7 +148,7 @@ async function connectWallet() {
   if (!addresses.length) {
     addresses = await wallet.request({ method: "eth_requestAccounts" });
   }
-  if (!addresses.length) throw new Error("Choose an account in MetaMask.");
+  if (!addresses.length) throw new Error("Select an account in MetaMask.");
 
   if (await wallet.request({ method: "eth_chainId" }) !== SEPOLIA) {
     await wallet.request({
@@ -177,120 +170,275 @@ async function connectWallet() {
   return { wallet, address };
 }
 
-function onAccountsChanged(addresses) {
-  updateAccount(addresses[0]);
+async function sepoliaContext(expectedAccount) {
+  const ethers = ethereumLibrary();
+  const { wallet, address } = await connectWallet();
+
+  if (expectedAccount && expectedAccount.toLowerCase() !== address.toLowerCase()) {
+    throw new Error("The sending account changed. Check the wallet address and try again.");
+  }
+
+  const provider = new ethers.BrowserProvider(wallet);
+  if ((await provider.getNetwork()).chainId !== SEPOLIA_CHAIN_ID) {
+    throw new Error("Select Sepolia in MetaMask before continuing.");
+  }
+
+  return { provider, address };
 }
 
-function addField(container, name, text, required = true) {
+function parseAddress(value, ethers) {
+  const address = String(value ?? "").trim();
+  if (!/^0x[0-9a-f]{40}$/i.test(address) || !ethers.isAddress(address)) {
+    throw new Error("Enter a valid wallet address starting with 0x.");
+  }
+  return ethers.getAddress(address);
+}
+
+function parseAmount(value, ethers) {
+  const amount = String(value ?? "").trim();
+  if (!/^(?:\d+(?:\.\d{1,18})?|\.\d{1,18})$/.test(amount)) {
+    throw new Error("Enter a test ETH amount such as 0.001.");
+  }
+  return ethers.parseEther(amount);
+}
+
+function clearResult(prefix) {
+  el(`${prefix}-status`).textContent = "";
+  el(`${prefix}-result`).textContent = "";
+  el(`${prefix}-result`).hidden = true;
+  const link = el(`${prefix}-receipt`);
+  link.removeAttribute("href");
+  link.hidden = true;
+}
+
+function displayResult(prefix, lines) {
+  const output = el(`${prefix}-result`);
+  output.textContent = lines.join("\n");
+  output.hidden = false;
+}
+
+async function showTransaction(prefix, tx, lines) {
+  const status = el(`${prefix}-status`);
+  const link = el(`${prefix}-receipt`);
+  const details = [...lines, `Transaction hash: ${tx.hash}`];
+
+  displayResult(prefix, details);
+  link.href = `${EXPLORER}/tx/${tx.hash}`;
+  link.hidden = false;
+  status.textContent = "Submitted. Waiting for Sepolia confirmation…";
+
+  const receipt = await tx.wait(1, 120000);
+  if (receipt?.status !== 1) {
+    status.textContent = "Open the receipt to check the final status.";
+    return;
+  }
+
+  displayResult(prefix, [...details, `Block: ${receipt.blockNumber}`]);
+  status.textContent = "Confirmed on Sepolia.";
+  return receipt;
+}
+
+function reportTransactionError(prefix, error) {
+  const pending = error.code === "TIMEOUT" && !el(`${prefix}-receipt`).hidden;
+  el(`${prefix}-status`).textContent = pending
+    ? "Submitted. Open the receipt to check its latest status."
+    : errorMessage(error);
+}
+
+el("connect").addEventListener("click", async () => {
+  if (busy) return;
+  setBusy(true);
+
+  try {
+    await connectWallet();
+    el("wallet-status").textContent = "MetaMask connected on Sepolia.";
+  } catch (error) {
+    el("wallet-status").textContent = errorMessage(error);
+  } finally {
+    setBusy(false);
+  }
+});
+
+el("payment-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (busy || !selectedContract()) return;
+
+  const fields = new FormData(event.currentTarget);
+  const expectedAccount = account;
+  setBusy(true);
+  clearResult("payment");
+
+  try {
+    const ethers = ethereumLibrary();
+    const recipient = parseAddress(fields.get("recipient"), ethers);
+    const value = parseAmount(fields.get("amount"), ethers);
+
+    if (recipient === ethers.ZeroAddress) {
+      throw new Error("Enter the recipient’s wallet address.");
+    }
+    if (value <= 0n) throw new Error("Enter an amount greater than zero.");
+
+    el("payment-status").textContent = "Connecting to MetaMask on Sepolia…";
+    const { provider, address } = await sepoliaContext(expectedAccount);
+    const signer = await provider.getSigner(address);
+
+    el("payment-status").textContent = "Review the recipient and amount in MetaMask.";
+    const tx = await signer.sendTransaction({
+      to: recipient,
+      value,
+      chainId: SEPOLIA_CHAIN_ID
+    });
+
+    await showTransaction("payment", tx, [
+      "Type: Direct wallet payment",
+      `From: ${tx.from}`,
+      `To: ${recipient}`,
+      `Amount: ${ethers.formatEther(tx.value)} Sepolia test ETH`
+    ]);
+  } catch (error) {
+    reportTransactionError("payment", error);
+  } finally {
+    setBusy(false);
+  }
+});
+
+function actionFragment() {
+  return actionSelect.value
+    ? selectedAbi()?.getFunction(actionSelect.value)
+    : null;
+}
+
+function addActionField(name, text, required = true) {
   const label = document.createElement("label");
   const input = document.createElement("input");
-  label.textContent = text;
   input.name = name;
   input.required = required;
   input.autocomplete = "off";
-  input.spellcheck = false;
+  label.textContent = text;
   label.append(input);
-  container.append(label);
+  el("action-fields").append(label);
   return input;
 }
 
-function drawFields(container, fragment, showRecipient = false) {
-  container.replaceChildren();
-  if (!fragment) return;
+function renderActionFields() {
+  el("action-fields").replaceChildren();
+  const fragment = actionFragment();
 
-  const addressInputs = fragment.inputs
-    .map((parameter, index) => ({ parameter, index }))
-    .filter(({ parameter }) => parameter.type === "address");
-
-  // Use the customer label only when the ABI has one unambiguous address field.
-  const recipientIndex = showRecipient && addressInputs.length === 1
-    ? addressInputs[0].index
-    : -1;
+  if (!fragment) {
+    el("run").textContent = "Run action";
+    setBusy(busy);
+    return;
+  }
 
   fragment.inputs.forEach((parameter, index) => {
-    if (index === recipientIndex) return;
-    const label = parameter.name || `Input ${index + 1}`;
-    const input = addField(
-      container, `arg${index}`, `${label} (${parameter.type})`,
-      parameter.type !== "string"
+    const isRecipient = parameter.type === "address" &&
+      ["issuePass", "registerVehicle"].includes(fragment.name) &&
+      fragment.inputs.filter((input) => input.type === "address").length === 1;
+
+    const name = isRecipient
+      ? "Customer wallet address"
+      : parameter.name || `Input ${index + 1}`;
+
+    const field = addActionField(
+      `arg${index}`, `${name} (${parameter.type})`, parameter.type !== "string"
     );
-    if (fragment.name === "jobs" && index === 0) input.value = "1";
+
+    if (parameter.type === "address") field.placeholder = "0x…";
+    if (fragment.name === "jobs" && index === 0) field.value = "1";
     if (["array", "tuple"].includes(parameter.baseType)) {
-      input.placeholder = "Enter a JSON array";
+      field.placeholder = "Enter a JSON array";
     }
   });
 
-  if (recipientIndex >= 0) {
-    addField(container, `arg${recipientIndex}`, "👛 Customer wallet address")
-      .placeholder = "0x…";
-  }
-
   if (fragment.payable) {
-    const amount = addField(container, "amount", "Amount in Sepolia test ETH");
-    amount.inputMode = "decimal";
-    amount.placeholder = fragment.name === "createBooking" ? "0.001" : "0.01";
+    const input = addActionField("amount", "Amount in Sepolia test ETH");
+    input.inputMode = "decimal";
+    input.placeholder = "0.001";
   }
-}
 
-function renderOtherAction() {
-  const fragment = actionSelect.value
-    ? currentAbi()?.getFunction(actionSelect.value)
-    : null;
-  drawFields(el("action-fields"), fragment);
-  el("run").textContent = fragment?.constant ? "Read result" : "Review in MetaMask";
+  el("run").textContent = fragment.constant ? "Read result" : "Review in MetaMask";
   setBusy(busy);
 }
 
 function renderContract() {
-  const config = currentContract();
-  const abi = currentAbi();
-  const actions = abi?.fragments.filter((entry) =>
-    entry.type === "function" && Object.hasOwn(config.actions, entry.name)
-  ) ?? [];
-
-  const candidates = actions.filter((entry) =>
-    entry.name === config.primary && !entry.constant &&
-    (!config.deposit || entry.payable)
-  );
-  primaryAction = candidates.length === 1 ? candidates[0] : null;
+  const config = selectedContract();
+  const abi = selectedAbi();
 
   el("description").textContent = config?.description || "";
   el("contract-address").textContent = config ? `Sepolia contract: ${config.address}` : "";
-  el("contract-setup").hidden = !config;
-  el("quick-form").hidden = !primaryAction;
-  el("other-actions").hidden = !actions.length;
+  el("payment-context").textContent = config
+    ? `Selected contract: ${contractSelect.value}. This form pays the wallet you enter.`
+    : "Choose a business and contract above.";
 
-  if (!abi) {
-    el("abi-status").textContent = config
-      ? `Upload the ABI exported from Remix for ${contractSelect.value}.`
-      : "";
-  } else if (!primaryAction) {
-    el("abi-status").textContent =
-      `ABI loaded. No single matching ${config.primary} action was found for the main button.`;
-  } else {
-    el("abi-status").textContent = "ABI loaded. Fill in the fields below.";
-  }
+  const actions = abi?.fragments.filter((fragment) =>
+    fragment.type === "function" && Object.hasOwn(config.actions, fragment.name)
+  ) ?? [];
 
-  el("quick-submit").textContent = config?.deposit
-    ? "Pay with MetaMask"
-    : "Review in MetaMask";
-
-  drawFields(el("quick-fields"), primaryAction, config?.recipient);
-  actionSelect.replaceChildren(...actions.map((entry) =>
-    new Option(config.actions[entry.name], entry.format("sighash"))
+  actionSelect.replaceChildren(...actions.map((fragment) =>
+    new Option(config.actions[fragment.name], fragment.format("sighash"))
   ));
-  renderOtherAction();
+
+  el("abi-status").textContent = abi
+    ? "ABI loaded. Choose an action."
+    : config ? `Upload the ABI exported from Remix for ${contractSelect.value}.`
+    : "Choose a contract first.";
+
+  renderActionFields();
 }
 
-function parseInput(parameter, value, ethers) {
-  if (parameter.type === "address") {
-    const address = value.trim();
-    if (!ethers.isAddress(address) || address.toLowerCase() === ethers.ZeroAddress) {
-      throw new Error("Enter a valid, non-zero wallet address starting with 0x.");
-    }
-    return ethers.getAddress(address);
-  }
+function selectionChanged() {
+  el("abi").value = "";
+  clearResult("action");
+  renderContract();
+  void loadHistory(true);
+}
 
+businessSelect.addEventListener("change", () => {
+  const names = businesses[businessSelect.value] || [];
+  contractSelect.replaceChildren(
+    new Option(names.length ? "Choose a contract" : "Choose a business first", ""),
+    ...names.map((name) => new Option(name, name))
+  );
+  selectionChanged();
+});
+
+contractSelect.addEventListener("change", selectionChanged);
+actionSelect.addEventListener("change", renderActionFields);
+
+el("abi").addEventListener("change", async (event) => {
+  const [file] = event.target.files;
+  const name = contractSelect.value;
+  if (!file || !name || busy) return;
+
+  setBusy(true);
+  clearResult("action");
+
+  try {
+    const ethers = ethereumLibrary();
+    const json = JSON.parse(await file.text());
+    const entries = Array.isArray(json) ? json : json?.abi;
+    if (!Array.isArray(entries)) throw new Error("Use the ABI JSON exported from Remix.");
+
+    const abi = new ethers.Interface(entries);
+    const supported = abi.fragments.some((fragment) =>
+      fragment.type === "function" && Object.hasOwn(contracts[name].actions, fragment.name)
+    );
+    if (!supported) throw new Error(`This ABI has no supported actions for ${name}.`);
+
+    abis.set(name, abi);
+    renderContract();
+  } catch (error) {
+    abis.delete(name);
+    el("abi").value = "";
+    renderContract();
+    el("abi-status").textContent = errorMessage(error);
+  } finally {
+    setBusy(false);
+  }
+});
+
+function parseInput(parameter, value, ethers) {
+  if (parameter.type === "address") return parseAddress(value, ethers);
   if (["array", "tuple"].includes(parameter.baseType)) return JSON.parse(value);
 
   if (parameter.type === "bool") {
@@ -303,29 +451,37 @@ function parseInput(parameter, value, ethers) {
   return parameter.type === "string" ? value : value.trim();
 }
 
-function clearResult() {
-  el("result").hidden = true;
-  el("result").textContent = "";
-  el("receipt").hidden = true;
-  el("receipt").removeAttribute("href");
+function contractEvents(receipt, abi, address) {
+  const events = [];
+
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== address) continue;
+
+    try {
+      const entry = abi.parseLog(log);
+      if (!entry) continue;
+      const fields = entry.fragment.inputs.map((input, index) =>
+        `${input.name || `Value ${index + 1}`}: ${String(entry.args[index])}`
+      );
+      events.push(`${entry.name} — ${fields.join(", ")}`);
+    } catch {
+      // The uploaded ABI may omit this event.
+    }
+  }
+  return events;
 }
 
-function displayResult(lines) {
-  el("result").textContent = lines.join("\n");
-  el("result").hidden = false;
-}
-
-async function runAction(event, fragment) {
+el("action-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const fragment = actionFragment();
   if (busy || !fragment) return;
 
-  const config = currentContract();
-  const abi = currentAbi();
   const fields = new FormData(event.currentTarget);
+  const config = selectedContract();
+  const abi = selectedAbi();
   const expectedAccount = account;
-
   setBusy(true);
-  clearResult();
+  clearResult("action");
 
   try {
     const ethers = ethereumLibrary();
@@ -333,27 +489,7 @@ async function runAction(event, fragment) {
       parseInput(parameter, fields.get(`arg${index}`), ethers)
     );
 
-    const overrides = {};
-    if (fragment.payable) {
-      const amount = fields.get("amount").trim();
-      if (!/^(?:\d+(?:\.\d{1,18})?|\.\d{1,18})$/.test(amount)) {
-        throw new Error("Enter a Sepolia test ETH amount, such as 0.001.");
-      }
-      overrides.value = ethers.parseEther(amount);
-      if (config.deposit && fragment.name === config.primary && overrides.value <= 0n) {
-        throw new Error("Enter a deposit greater than zero.");
-      }
-    }
-
-    const { wallet, address } = await connectWallet();
-    if (expectedAccount && expectedAccount.toLowerCase() !== address.toLowerCase()) {
-      throw new Error("Your MetaMask account changed. Check the wallet address and try again.");
-    }
-
-    const provider = new ethers.BrowserProvider(wallet);
-    if ((await provider.getNetwork()).chainId !== 11155111n) {
-      throw new Error("Switch MetaMask to Sepolia before continuing.");
-    }
+    const { provider, address } = await sepoliaContext(expectedAccount);
     if (await provider.getCode(config.address) === "0x") {
       throw new Error("No deployed contract was found at this address on Sepolia.");
     }
@@ -364,65 +500,46 @@ async function runAction(event, fragment) {
 
     if (fragment.constant) {
       const values = await method.staticCallResult(...args);
-      displayResult(fragment.outputs.map((output, index) => {
+      displayResult("action", fragment.outputs.map((field, index) => {
         const value = JSON.stringify(values[index], (_, item) =>
           typeof item === "bigint" ? item.toString() : item
         );
-        return `${output.name || `Result ${index + 1}`}: ${value}`;
+        return `${field.name || `Result ${index + 1}`}: ${value}`;
       }));
-      setStatus("Result read from Sepolia.");
+      el("action-status").textContent = "Result read from Sepolia.";
       return;
     }
 
-    setStatus("Review the prepared transaction in MetaMask.");
+    const overrides = { chainId: SEPOLIA_CHAIN_ID };
+    if (fragment.payable) {
+      overrides.value = parseAmount(fields.get("amount"), ethers);
+    }
+
+    el("action-status").textContent = "Review the contract action in MetaMask.";
     const tx = await method.send(...args, overrides);
-
-    const details = [
+    const lines = [
       `Action: ${config.actions[fragment.name]}`,
-      `Sending wallet: ${tx.from}`,
+      `From: ${tx.from}`,
       `Contract: ${config.address}`,
-      `Test ETH sent: ${ethers.formatEther(tx.value)}`,
-      `Transaction hash: ${tx.hash}`
+      `Test ETH sent: ${ethers.formatEther(tx.value)}`
     ];
-    displayResult(details);
-    el("receipt").href = `${EXPLORER}/tx/${tx.hash}`;
-    el("receipt").hidden = false;
-    setStatus("Submitted. Waiting for Sepolia confirmation…");
 
-    const receipt = await tx.wait(1, 120000);
-    if (receipt?.status !== 1) {
-      setStatus("Check the receipt for the final transaction status.");
-      return;
+    const receipt = await showTransaction("action", tx, lines);
+    if (receipt) {
+      displayResult("action", [
+        ...lines,
+        `Transaction hash: ${tx.hash}`,
+        `Block: ${receipt.blockNumber}`,
+        ...contractEvents(receipt, abi, config.address)
+      ]);
+      void loadHistory(true);
     }
-
-    details.push(`Block: ${receipt.blockNumber}`);
-    for (const log of receipt.logs) {
-      if (log.address.toLowerCase() !== config.address) continue;
-      try {
-        const decoded = abi.parseLog(log);
-        if (!decoded) continue;
-        const values = decoded.fragment.inputs.map((input, index) =>
-          `${input.name || `Value ${index + 1}`}: ${String(decoded.args[index])}`
-        );
-        details.push(`${decoded.name} — ${values.join(", ")}`);
-      } catch {
-        // Logs outside the loaded ABI can still be viewed in the receipt.
-      }
-    }
-
-    displayResult(details);
-    setStatus("Confirmed on Sepolia. Use Refresh history if the new record takes time to appear.");
-    void loadHistory(true);
   } catch (error) {
-    if (error.code === "TIMEOUT" && !el("receipt").hidden) {
-      setStatus("Transaction submitted. Open the receipt to check confirmation.");
-    } else {
-      showError(error);
-    }
+    reportTransactionError("action", error);
   } finally {
     setBusy(false);
   }
-}
+});
 
 function formatTestEth(wei) {
   const digits = BigInt(wei ?? "0").toString().padStart(19, "0");
@@ -430,25 +547,31 @@ function formatTestEth(wei) {
   return digits.slice(0, -18) + (fraction ? `.${fraction}` : "");
 }
 
+function shorten(value) {
+  return value ? `${value.slice(0, 8)}…${value.slice(-4)}` : "—";
+}
+
 function renderHistory() {
   const body = el("history-rows");
-  const config = currentContract();
+  const config = selectedContract();
   body.replaceChildren();
+  if (!config) return;
 
-  for (const tx of history.values()) {
-    const row = body.insertRow();
-    const action = Object.hasOwn(config.actions, tx.method)
-      ? config.actions[tx.method]
-      : tx.method || (tx.created_contract ? "Deploy contract" : "Contract transaction");
-    const sender = tx.from?.hash;
+  for (const tx of transactions.values()) {
+    const method = tx.method;
+    const action = Object.hasOwn(config.actions, method)
+      ? config.actions[method]
+      : method || (tx.created_contract ? "Deploy contract" : "Contract transaction");
     const status = tx.status === "ok" ? "Success"
       : tx.status === "error" ? "Failed"
       : tx.timestamp ? "Unknown" : "Pending";
+    const sender = tx.from?.hash;
+    const row = body.insertRow();
 
     for (const value of [
       action,
       tx.timestamp ? new Date(tx.timestamp).toLocaleString() : "Pending",
-      sender ? `${sender.slice(0, 8)}…${sender.slice(-4)}` : "—",
+      shorten(sender),
       formatTestEth(tx.value),
       status
     ]) {
@@ -456,14 +579,15 @@ function renderHistory() {
     }
     row.cells[2].title = sender || "";
 
-    const receiptCell = row.insertCell();
+    const cell = row.insertCell();
     if (typeof tx.hash === "string" && /^0x[0-9a-f]{64}$/i.test(tx.hash)) {
       const link = document.createElement("a");
       link.href = `${EXPLORER}/tx/${tx.hash}`;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
-      link.textContent = `${tx.hash.slice(0, 10)}…`;
-      receiptCell.append(link);
+      link.textContent = shorten(tx.hash);
+      link.title = tx.hash;
+      cell.append(link);
     }
   }
 }
@@ -474,29 +598,32 @@ async function loadHistory(reset) {
   historyRequest = controller;
 
   if (reset) {
-    history.clear();
+    transactions.clear();
     nextPage = null;
     renderHistory();
   }
 
-  const config = currentContract();
+  const config = selectedContract();
   const status = el("history-status");
   const more = el("history-more");
   const showAll = el("history-all").checked;
-  const walletFilter = account?.toLowerCase();
+  const wallet = account?.toLowerCase();
+
   more.hidden = true;
   more.disabled = true;
 
   if (!config) {
-    status.textContent = "Choose a business and contract to view its history.";
+    status.textContent = "Choose a business and contract to see its history.";
     return;
   }
-  if (!showAll && !walletFilter) {
-    status.textContent = "Connect MetaMask to filter by your wallet, or tick Show all wallets.";
+
+  if (!showAll && !wallet) {
+    status.textContent = "Connect MetaMask to filter by wallet, or tick Show all wallets.";
     return;
   }
 
   status.textContent = "Loading Sepolia history…";
+
   const url = new URL(`${HISTORY_API}/${config.address}/transactions`);
   if (nextPage) url.search = new URLSearchParams(nextPage).toString();
 
@@ -512,21 +639,25 @@ async function loadHistory(reset) {
     if (!Array.isArray(data.items)) throw new Error("Unexpected history response.");
 
     nextPage = data.next_page_params ?? null;
+
     for (const tx of data.items) {
       const addresses = [tx.from?.hash, tx.to?.hash, tx.created_contract?.hash];
-      if (showAll || addresses.some((address) => address?.toLowerCase() === walletFilter)) {
-        history.set(tx.hash, tx);
+      if (showAll || addresses.some((address) => address?.toLowerCase() === wallet)) {
+        transactions.set(tx.hash, tx);
       }
     }
 
     renderHistory();
-    status.textContent = history.size
-      ? `${history.size} matching transaction(s) shown.`
-      : nextPage ? "No matches on this page. Click Load older transactions."
-      : "No matching transactions found.";
+    if (transactions.size) {
+      status.textContent = `${transactions.size} matching transaction(s) shown.`;
+    } else {
+      status.textContent = nextPage
+        ? "No matches on this page. Click Load older transactions."
+        : "No matching transactions found.";
+    }
   } catch (error) {
     if (!controller.signal.aborted) {
-      status.textContent = `Could not load history. ${error.message} Try Refresh history.`;
+      status.textContent = `Could not load history. ${errorMessage(error)} Try Refresh history.`;
     }
   } finally {
     if (!controller.signal.aborted) {
@@ -535,79 +666,6 @@ async function loadHistory(reset) {
     }
   }
 }
-
-function selectionChanged() {
-  el("abi").value = "";
-  clearResult();
-  renderContract();
-  setStatus(currentContract() ? "Contract selected." : "Choose a business and contract.");
-  void loadHistory(true);
-}
-
-businessSelect.addEventListener("change", () => {
-  const names = businesses[businessSelect.value] || [];
-  contractSelect.replaceChildren(
-    new Option(names.length ? "Select a contract" : "Select a business first", ""),
-    ...names.map((name) => new Option(name, name))
-  );
-  selectionChanged();
-});
-
-contractSelect.addEventListener("change", selectionChanged);
-
-el("connect").addEventListener("click", async () => {
-  if (busy) return;
-  setBusy(true);
-  try {
-    await connectWallet();
-    setStatus("MetaMask connected on Sepolia.");
-  } catch (error) {
-    showError(error);
-  } finally {
-    setBusy(false);
-  }
-});
-
-el("abi").addEventListener("change", async (event) => {
-  const [file] = event.target.files;
-  const name = contractSelect.value;
-  if (!file || !name || busy) return;
-  setBusy(true);
-
-  try {
-    const ethers = ethereumLibrary();
-    const parsed = JSON.parse(await file.text());
-    const entries = Array.isArray(parsed) ? parsed : parsed?.abi;
-    if (!Array.isArray(entries)) throw new Error("Upload the ABI JSON exported from Remix.");
-
-    const abi = new ethers.Interface(entries);
-    const valid = abi.fragments.some((entry) =>
-      entry.type === "function" && Object.hasOwn(contracts[name].actions, entry.name)
-    );
-    if (!valid) throw new Error(`This ABI contains no supported actions for ${name}.`);
-
-    abis.set(name, abi);
-    renderContract();
-  } catch (error) {
-    abis.delete(name);
-    el("abi").value = "";
-    renderContract();
-    el("abi-status").textContent = error.message;
-  } finally {
-    setBusy(false);
-  }
-});
-
-actionSelect.addEventListener("change", renderOtherAction);
-el("quick-form").addEventListener("submit", (event) => {
-  void runAction(event, primaryAction);
-});
-el("action-form").addEventListener("submit", (event) => {
-  const fragment = actionSelect.value
-    ? currentAbi()?.getFunction(actionSelect.value)
-    : null;
-  void runAction(event, fragment);
-});
 
 el("history-refresh").addEventListener("click", () => loadHistory(true));
 el("history-all").addEventListener("change", () => loadHistory(true));
